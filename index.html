@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>S.T.A.R.K. MARK IX – STABLE BUILD</title>
+
+<style>
+:root {
+    --cyan:#00f2ff;
+    --red:#ff3c00;
+    --panel:rgba(0,15,25,.85);
+}
+body{
+    margin:0;
+    background:#000;
+    color:var(--cyan);
+    overflow:hidden;
+    font-family:Segoe UI,system-ui;
+}
+#hud{position:fixed;inset:10px;border:1px solid rgba(0,242,255,.2)}
+.panel{
+    position:absolute;top:40px;left:40px;width:340px;
+    background:var(--panel);padding:22px;
+    border-left:4px solid var(--cyan)
+}
+.stat{font:11px monospace;opacity:.8;margin-top:6px}
+button{
+    width:100%;margin-top:15px;
+    background:rgba(0,242,255,.1);
+    border:1px solid var(--cyan);
+    color:var(--cyan);
+    padding:12px;font-weight:bold;
+    cursor:pointer
+}
+button:hover{background:var(--cyan);color:#000}
+video{
+    position:absolute;right:40px;bottom:40px;
+    width:220px;opacity:.5;
+    border:1px solid var(--cyan);
+    transform:scaleX(-1)
+}
+</style>
+</head>
+
+<body>
+
+<div id="hud">
+    <div class="panel">
+        <h2>MARK IX CORE</h2>
+        <div id="status" style="color:var(--red)">OFFLINE</div>
+        <div class="stat">SYNC: <span id="sync">0%</span></div>
+        <div class="stat">PINCH: <span id="pinch">0.00</span></div>
+        <div class="stat">FPS: <span id="fps">0</span></div>
+        <button id="init">ENGAGE</button>
+    </div>
+</div>
+
+<video id="cam" autoplay muted playsinline></video>
+
+<script type="importmap">
+{
+  "imports":{
+    "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import {EffectComposer} from "three/addons/postprocessing/EffectComposer.js";
+import {RenderPass} from "three/addons/postprocessing/RenderPass.js";
+import {UnrealBloomPass} from "three/addons/postprocessing/UnrealBloomPass.js";
+import {Hands} from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+import {Camera} from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
+
+if(!window.isSecureContext){
+    alert("HTTPS REQUIRED (GitHub Pages only)");
+    throw new Error("Insecure context");
+}
+
+let scene=new THREE.Scene();
+let cam3d=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,1,1000);
+cam3d.position.z=90;
+
+let renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+let composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,cam3d));
+composer.addPass(new UnrealBloomPass(
+    new THREE.Vector2(innerWidth,innerHeight),
+    1.2,.4,.6
+));
+
+let geo=new THREE.BufferGeometry();
+let pts=[];
+for(let i=0;i<2000;i++){
+    let a=i*.15;
+    pts.push(Math.cos(a)*10,i*.03-30,Math.sin(a)*10);
+}
+geo.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
+
+let mat=new THREE.ShaderMaterial({
+    uniforms:{t:{value:0},p:{value:0}},
+    vertexShader:`
+    uniform float t,p;
+    void main(){
+        vec3 v=position*(1.-p*.6);
+        v.x+=sin(t+v.y)*2.;
+        vec4 mv=modelViewMatrix*vec4(v,1.);
+        gl_PointSize=14./-mv.z;
+        gl_Position=projectionMatrix*mv;
+    }`,
+    fragmentShader:`void main(){
+        if(distance(gl_PointCoord,vec2(.5))>.5)discard;
+        gl_FragColor=vec4(0.,.9,1.,1.);
+    }`,
+    transparent:true,blending:THREE.AdditiveBlending
+});
+let helix=new THREE.Points(geo,mat);
+scene.add(helix);
+
+let last=performance.now(),frames=0;
+function animate(t){
+    requestAnimationFrame(animate);
+    mat.uniforms.t.value+=.03;
+    helix.rotation.y+=.002;
+    composer.render();
+    frames++;
+    if(t-last>1000){
+        fps.textContent=frames;
+        frames=0;last=t;
+    }
+}
+animate();
+
+window.onresize=()=>{
+    cam3d.aspect=innerWidth/innerHeight;
+    cam3d.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+};
+
+init.onclick=async()=>{
+    const video=document.getElementById("cam");
+    const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+    hands.setOptions({maxNumHands:1,minDetectionConfidence:.7});
+    hands.onResults(r=>{
+        if(!r.multiHandLandmarks)return;
+        let h=r.multiHandLandmarks[0];
+        let d=Math.hypot(h[4].x-h[8].x,h[4].y-h[8].y);
+        let pinch=Math.max(0,Math.min(1,(.1-d)*10));
+        mat.uniforms.p.value=THREE.MathUtils.lerp(mat.uniforms.p.value,pinch,.15);
+        pinchEl.textContent=pinch.toFixed(2);
+        sync.textContent="100%";
+        status.textContent="ONLINE";
+        status.style.color=var(--cyan);
+    });
+    await new Camera(video,{onFrame:()=>hands.send({image:video}),width:640,height:480}).start();
+    init.remove();
+};
+</script>
+</body>
+</html>
